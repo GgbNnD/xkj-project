@@ -97,7 +97,7 @@ class VoiceControlGUI:
         
         # 识别模式选择
         ttk.Label(settings_frame, text="识别模式:").grid(row=1, column=0, padx=5, pady=5)
-        self.combo_mode = ttk.Combobox(settings_frame, values=["本地模型 (Local AI)", "在线英文 (Online English)"], state="readonly")
+        self.combo_mode = ttk.Combobox(settings_frame, values=["本地模型 (Local AI)"], state="readonly")
         self.combo_mode.set("本地模型 (Local AI)")
         self.combo_mode.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
         
@@ -298,8 +298,8 @@ class VoiceControlGUI:
         
         try:
             # 传递识别模式
-            use_online = "Online" in mode
-            result = self.system.process_audio_signal(signal, fs, snr_db=snr, use_online=use_online)
+            # use_online = "Online" in mode # 移除在线模式判断
+            result = self.system.process_audio_signal(signal, fs, snr_db=snr)
             
             if result['overall_success']:
                 summary = result['summary']

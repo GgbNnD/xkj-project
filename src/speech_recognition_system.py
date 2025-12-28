@@ -8,12 +8,12 @@ from typing import Tuple, List, Dict, Optional
 import logging
 import os
 import joblib
-import speech_recognition as sr
-from sklearn.neural_network import MLPClassifier
-from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import Pipeline
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+# import speech_recognition as sr # 移除在线识别库
+# from sklearn.neural_network import MLPClassifier # 移除神经网络
+# from sklearn.preprocessing import StandardScaler
+# from sklearn.pipeline import Pipeline
+# from sklearn.model_selection import train_test_split
+# from sklearn.metrics import accuracy_score
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -208,123 +208,132 @@ class AudioFeatureExtractor:
 
 
 class CommandClassifier:
-    """命令分类器（基于神经网络 MLP）"""
+    """命令分类器（基于传统特征匹配 - 最近邻/模板匹配）"""
     
-    def __init__(self, num_commands: int = 4, model_path: str = 'data/speech_model.pkl'):
+    def __init__(self, num_commands: int = 4, model_path: str = 'data/speech_templates.pkl'):
         """
         初始化命令分类器
         
         Args:
             num_commands: 命令数量
-            model_path: 模型保存路径
+            model_path: 模板保存路径
         """
         self.num_commands = num_commands
-        # 更新为中文命令
         self.command_names = ["前进", "后退", "停止", "旋转"]
         self.model_path = model_path
-        self.model = None
+        
+        # 存储每个命令的特征模板 (centroid)
+        # 格式: {command_id: feature_vector}
+        self.templates = {} 
         self.trained = False
         
-        # 尝试加载已有模型
+        # 尝试加载已有模板
         self.load_model()
     
     def train(self, features: np.ndarray, labels: np.ndarray) -> Dict[str, float]:
         """
-        训练分类器
+        训练分类器 (实际上是计算并存储特征模板)
         
         Args:
             features: 特征矩阵 (样本数, 特征数)
             labels: 标签向量 (样本数,)
             
         Returns:
-            metrics: 训练指标
+            metrics: 训练指标 (这里返回简单的统计信息)
         """
-        # 创建MLP管道：标准化 -> MLP
-        # 使用三个隐藏层 (256, 128, 64)，最大迭代次数 2000
-        self.model = Pipeline([
-            ('scaler', StandardScaler()),
-            ('mlp', MLPClassifier(hidden_layer_sizes=(256, 128, 64), 
-                                max_iter=2000, 
-                                activation='relu',
-                                solver='adam',
-                                random_state=42,
-                                early_stopping=True,
-                                validation_fraction=0.1))
-        ])
+        logger.info("Training Template Matching Classifier...")
         
-        # 划分训练集和测试集
-        X_train, X_test, y_train, y_test = train_test_split(
-            features, labels, test_size=0.2, random_state=42, stratify=labels
-        )
+        self.templates = {}
+        unique_labels = np.unique(labels)
         
-        # 训练模型
-        logger.info(f"Training MLP model with {len(X_train)} samples...")
-        self.model.fit(X_train, y_train)
-        
-        # 评估模型
-        train_acc = self.model.score(X_train, y_train)
-        test_acc = self.model.score(X_test, y_test)
-        
-        logger.info(f"Model trained. Train Acc: {train_acc:.4f}, Test Acc: {test_acc:.4f}")
+        for label in unique_labels:
+            # 获取该标签的所有样本特征
+            label_features = features[labels == label]
+            
+            # 计算平均特征向量 (Centroid) 作为模板
+            # 这种方法假设同一命令的特征在空间中聚类紧密
+            centroid = np.mean(label_features, axis=0)
+            self.templates[int(label)] = centroid
+            
+            logger.info(f"Created template for command {label} ({self.get_command_name(label)}) using {len(label_features)} samples")
         
         self.trained = True
         self.save_model()
         
-        return {'train_acc': train_acc, 'test_acc': test_acc}
+        # 简单的回测准确率
+        correct = 0
+        for i in range(len(features)):
+            pred, _ = self.predict(features[i])
+            if pred == labels[i]:
+                correct += 1
+        acc = correct / len(features)
+        
+        return {'train_acc': acc, 'test_acc': acc} # 传统方法没有划分验证集
     
     def predict(self, features: np.ndarray) -> Tuple[int, float]:
         """
-        预测命令
+        预测命令 (基于最小欧氏距离)
         
         Args:
             features: 特征向量 (特征数,)
             
         Returns:
             predicted_command: 预测的命令索引
-            confidence: 置信度
+            confidence: 置信度 (基于距离的倒数)
         """
-        if not self.trained or self.model is None:
-            logger.warning("Classifier not trained, returning random prediction")
+        if not self.trained or not self.templates:
+            logger.warning("Classifier not trained (no templates), returning random prediction")
             return np.random.randint(0, self.num_commands), 0.0
         
-        # 确保特征是2D数组
-        if features.ndim == 1:
-            features = features.reshape(1, -1)
+        # 确保特征是1D数组
+        if features.ndim > 1:
+            features = features.flatten()
             
-        # 预测
-        try:
-            probs = self.model.predict_proba(features)[0]
-            predicted_command = np.argmax(probs)
-            confidence = probs[predicted_command]
+        min_dist = float('inf')
+        best_cmd = -1
+        
+        # 计算到每个模板的距离
+        distances = {}
+        for cmd_id, template in self.templates.items():
+            # 欧氏距离
+            dist = np.linalg.norm(features - template)
+            distances[cmd_id] = dist
             
-            # 详细日志
-            probs_str = ", ".join([f"{self.command_names[i]}: {p:.2f}" for i, p in enumerate(probs)])
-            logger.info(f"Prediction probabilities: {probs_str}")
+            if dist < min_dist:
+                min_dist = dist
+                best_cmd = cmd_id
+        
+        # 计算简单的置信度 (距离越小置信度越高)
+        # 使用 softmax 类似的转换或者简单的归一化
+        # 这里使用简单的反比: confidence = 1 / (1 + dist)
+        confidence = 1.0 / (1.0 + min_dist)
+        
+        # 记录距离以便调试
+        dist_str = ", ".join([f"{self.get_command_name(c)}: {d:.2f}" for c, d in distances.items()])
+        logger.info(f"Distances: {dist_str} -> Best: {self.get_command_name(best_cmd)}")
             
-            return predicted_command, confidence
-        except Exception as e:
-            logger.error(f"Prediction error: {e}")
-            return 0, 0.0
+        return best_cmd, confidence
     
     def save_model(self) -> None:
-        """保存模型到磁盘"""
+        """保存模板到磁盘"""
         try:
             os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
-            joblib.dump(self.model, self.model_path)
-            logger.info(f"Model saved to {self.model_path}")
+            joblib.dump(self.templates, self.model_path)
+            logger.info(f"Templates saved to {self.model_path}")
         except Exception as e:
-            logger.error(f"Failed to save model: {e}")
+            logger.error(f"Failed to save templates: {e}")
 
     def load_model(self) -> bool:
-        """从磁盘加载模型"""
+        """从磁盘加载模板"""
         if os.path.exists(self.model_path):
             try:
-                self.model = joblib.load(self.model_path)
-                self.trained = True
-                logger.info(f"Model loaded from {self.model_path}")
-                return True
+                self.templates = joblib.load(self.model_path)
+                if self.templates:
+                    self.trained = True
+                    logger.info(f"Templates loaded from {self.model_path}")
+                    return True
             except Exception as e:
-                logger.error(f"Failed to load model: {e}")
+                logger.error(f"Failed to load templates: {e}")
         return False
 
     def get_command_name(self, command_id: int) -> str:
@@ -350,50 +359,13 @@ class SpeechRecognitionSystem:
         self.fs = fs
         self.feature_extractor = AudioFeatureExtractor(fs)
         self.classifier = CommandClassifier(num_commands)
-        self.recognizer = sr.Recognizer()
+        # self.recognizer = sr.Recognizer() # 移除在线识别器
         
-    def recognize_google(self, signal: np.ndarray) -> Tuple[str, float]:
-        """
-        使用 Google Speech Recognition API 进行识别 (需要联网)
-        
-        Args:
-            signal: 音频信号
-            
-        Returns:
-            command: 识别的命令
-            confidence: 置信度 (模拟值，API不总是返回)
-        """
-        try:
-            # 将 float32 (-1.0 到 1.0) 转换为 int16 PCM
-            signal_int16 = (signal * 32767).astype(np.int16)
-            audio_data = sr.AudioData(signal_int16.tobytes(), self.fs, 2)
-            
-            # 识别英文
-            text = self.recognizer.recognize_google(audio_data, language="en-US")
-            logger.info(f"Google Speech Recognition result: {text}")
-            
-            # 映射到系统命令
-            text = text.lower()
-            if "forward" in text or "go" in text or "move" in text:
-                return "前进", 0.95
-            elif "back" in text or "backward" in text or "retreat" in text:
-                return "后退", 0.95
-            elif "stop" in text or "halt" in text or "wait" in text:
-                return "停止", 0.95
-            elif "rotate" in text or "turn" in text or "spin" in text:
-                return "旋转", 0.95
-            else:
-                return "Unknown", 0.0
-                
-        except sr.UnknownValueError:
-            logger.warning("Google Speech Recognition could not understand audio")
-            return "Unknown", 0.0
-        except sr.RequestError as e:
-            logger.error(f"Could not request results from Google Speech Recognition service; {e}")
-            return "Error", 0.0
-        except Exception as e:
-            logger.error(f"Error in google recognition: {e}")
-            return "Error", 0.0
+    # def recognize_google(self, signal: np.ndarray) -> Tuple[str, float]:
+    #     """
+    #     使用 Google Speech Recognition API 进行识别 (需要联网)
+    #     """
+    #     pass # 移除在线识别功能
     
     def recognize_command(self, signal: np.ndarray) -> Tuple[str, float]:
         """
@@ -432,54 +404,11 @@ class SpeechRecognitionSystem:
             logger.error(f"Error in command recognition: {e}")
             return "Unknown Command", 0.0
 
-    def recognize_google(self, signal: np.ndarray) -> Tuple[str, float]:
-        """
-        使用 Google Web Speech API 进行在线语音识别 (支持英文)
-        
-        Args:
-            signal: 音频信号 (numpy array)
-            
-        Returns:
-            command: 识别的命令名称 (映射回中文命令)
-            confidence: 置信度
-        """
-        recognizer = sr.Recognizer()
-        
-        # 将 numpy float array 转换为 int16 bytes
-        # 确保信号在 -1 到 1 之间
-        signal = np.clip(signal, -1.0, 1.0)
-        signal_int16 = (signal * 32767).astype(np.int16)
-        
-        # 创建 AudioData 对象
-        # sample_width=2 (16-bit), sample_rate=self.fs
-        audio_data = sr.AudioData(signal_int16.tobytes(), self.fs, 2)
-        
-        try:
-            logger.info("Sending audio to Google Speech Recognition...")
-            # 使用 Google Web Speech API
-            text = recognizer.recognize_google(audio_data, language="en-US")
-            logger.info(f"Google Speech Recognition result: {text}")
-            
-            # 简单的关键词映射
-            text = text.lower()
-            if "forward" in text or "go" in text or "move" in text:
-                return "前进", 0.95
-            elif "back" in text or "backward" in text or "reverse" in text:
-                return "后退", 0.95
-            elif "stop" in text or "halt" in text or "wait" in text:
-                return "停止", 0.95
-            elif "rotate" in text or "turn" in text or "spin" in text:
-                return "旋转", 0.95
-            else:
-                logger.info(f"Unmapped command: {text}")
-                return "未知命令", 0.0
-                
-        except sr.UnknownValueError:
-            logger.warning("Google Speech Recognition could not understand audio")
-            return "无法识别", 0.0
-        except sr.RequestError as e:
-            logger.error(f"Could not request results from Google Speech Recognition service; {e}")
-            return "服务错误", 0.0
+    # def recognize_google(self, signal: np.ndarray) -> Tuple[str, float]:
+    #     """
+    #     使用 Google Web Speech API 进行在线语音识别 (支持英文)
+    #     """
+    #     pass # 移除在线识别功能
     
     def _heuristic_recognition(self, signal: np.ndarray) -> str:
         """
