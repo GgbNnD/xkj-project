@@ -279,6 +279,12 @@ class VoiceControlGUI:
         self.ax2.grid(True)
         self.canvas.draw()
         
+        # 检查信号强度
+        max_amp = np.max(np.abs(signal))
+        if max_amp < 0.05:
+            self._log(f"警告: 录音信号太弱 (最大幅值: {max_amp:.3f})")
+            self._log("请靠近麦克风或大声说话")
+        
         # 调用系统处理
         snr = self.scale_snr.get()
         self._log(f"正在处理信号 (SNR={snr:.1f}dB)...")

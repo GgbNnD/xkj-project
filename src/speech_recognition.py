@@ -46,6 +46,15 @@ class AudioFeatureExtractor:
         Returns:
             mfcc_features: MFCC特征矩阵
         """
+        # 信号预处理：归一化
+        if len(signal) > 0:
+            # 去除直流分量
+            signal = signal - np.mean(signal)
+            # 幅度归一化
+            max_val = np.max(np.abs(signal))
+            if max_val > 0:
+                signal = signal / max_val
+                
         # 帧化处理
         n_frames = int(np.ceil((len(signal) - frame_length) / hop_length)) + 1
         frames = np.zeros((n_frames, frame_length))
@@ -279,6 +288,11 @@ class CommandClassifier:
             probs = self.model.predict_proba(features)[0]
             predicted_command = np.argmax(probs)
             confidence = probs[predicted_command]
+            
+            # 详细日志
+            probs_str = ", ".join([f"{self.command_names[i]}: {p:.2f}" for i, p in enumerate(probs)])
+            logger.info(f"Prediction probabilities: {probs_str}")
+            
             return predicted_command, confidence
         except Exception as e:
             logger.error(f"Prediction error: {e}")
