@@ -29,7 +29,7 @@ from signal_processing import SignalProcessing
 from source_encoding import SourceEncoding
 from channel_encoding import BCHCoder
 from modulation import Modulation
-from speech_recognition import SpeechRecognitionSystem
+from speech_recognition_system import SpeechRecognitionSystem
 from control_system import ControlSystem
 
 # 配置日志

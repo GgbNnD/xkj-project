@@ -3,7 +3,7 @@ import time
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
-from speech_recognition import SpeechRecognitionSystem
+from speech_recognition_system import SpeechRecognitionSystem
 import logging
 
 logging.basicConfig(level=logging.INFO)

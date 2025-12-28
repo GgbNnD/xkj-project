@@ -19,7 +19,7 @@ import soundfile as sf
 from datetime import datetime
 
 # 导入系统模块
-from speech_recognition import SpeechRecognitionSystem, CommandClassifier
+from speech_recognition_system import SpeechRecognitionSystem, CommandClassifier
 from signal_processing import SignalProcessing
 
 # 配置日志

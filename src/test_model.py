@@ -9,7 +9,7 @@ import soundfile as sf
 import joblib
 from sklearn.metrics import classification_report, confusion_matrix
 import logging
-from speech_recognition import SpeechRecognitionSystem
+from speech_recognition_system import SpeechRecognitionSystem
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
