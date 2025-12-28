@@ -270,13 +270,14 @@ class VoiceControlGUI:
         dx, dy = 0, 0
         rotation = 0
         
-        if command == "Forward":
+        # 支持中文和英文命令
+        if command in ["Forward", "前进"]:
             dy = -50
-        elif command == "Backward":
+        elif command in ["Backward", "后退"]:
             dy = 50
-        elif command == "Rotate":
+        elif command in ["Rotate", "旋转"]:
             rotation = 90
-        elif command == "Stop":
+        elif command in ["Stop", "停止"]:
             pass
             
         # 动画步骤

@@ -4,8 +4,15 @@ Speech Recognition Module for Remote Voice Control System
 """
 
 import numpy as np
-from typing import Tuple, List, Dict
+from typing import Tuple, List, Dict, Optional
 import logging
+import os
+import joblib
+from sklearn.svm import SVC
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -191,39 +198,62 @@ class AudioFeatureExtractor:
 
 
 class CommandClassifier:
-    """命令分类器（简化版本）"""
+    """命令分类器（基于SVM）"""
     
-    def __init__(self, num_commands: int = 4):
+    def __init__(self, num_commands: int = 4, model_path: str = 'data/speech_model.pkl'):
         """
         初始化命令分类器
         
         Args:
             num_commands: 命令数量
+            model_path: 模型保存路径
         """
         self.num_commands = num_commands
-        self.command_names = [f'Command_{i}' for i in range(num_commands)]
+        # 更新为中文命令
+        self.command_names = ["前进", "后退", "停止", "旋转"]
+        self.model_path = model_path
+        self.model = None
         self.trained = False
+        
+        # 尝试加载已有模型
+        self.load_model()
     
-    def train(self, features: np.ndarray, labels: np.ndarray) -> None:
+    def train(self, features: np.ndarray, labels: np.ndarray) -> Dict[str, float]:
         """
         训练分类器
         
         Args:
             features: 特征矩阵 (样本数, 特征数)
             labels: 标签向量 (样本数,)
+            
+        Returns:
+            metrics: 训练指标
         """
-        # 计算每个类的特征均值
-        self.class_means = np.zeros((self.num_commands, features.shape[1]))
-        self.class_covs = np.zeros((self.num_commands, features.shape[1], features.shape[1]))
+        # 创建SVM管道：标准化 -> SVM
+        self.model = Pipeline([
+            ('scaler', StandardScaler()),
+            ('svc', SVC(kernel='rbf', probability=True, class_weight='balanced'))
+        ])
         
-        for i in range(self.num_commands):
-            class_features = features[labels == i]
-            if len(class_features) > 0:
-                self.class_means[i] = np.mean(class_features, axis=0)
-                self.class_covs[i] = np.cov(class_features.T)
+        # 划分训练集和测试集
+        X_train, X_test, y_train, y_test = train_test_split(
+            features, labels, test_size=0.2, random_state=42, stratify=labels
+        )
+        
+        # 训练模型
+        logger.info(f"Training SVM model with {len(X_train)} samples...")
+        self.model.fit(X_train, y_train)
+        
+        # 评估模型
+        train_acc = self.model.score(X_train, y_train)
+        test_acc = self.model.score(X_test, y_test)
+        
+        logger.info(f"Model trained. Train Acc: {train_acc:.4f}, Test Acc: {test_acc:.4f}")
         
         self.trained = True
-        logger.info(f"Classifier trained on {len(features)} samples")
+        self.save_model()
+        
+        return {'train_acc': train_acc, 'test_acc': test_acc}
     
     def predict(self, features: np.ndarray) -> Tuple[int, float]:
         """
@@ -236,50 +266,50 @@ class CommandClassifier:
             predicted_command: 预测的命令索引
             confidence: 置信度
         """
-        if not self.trained:
+        if not self.trained or self.model is None:
             logger.warning("Classifier not trained, returning random prediction")
-            return np.random.randint(0, self.num_commands), 0.5
+            return np.random.randint(0, self.num_commands), 0.0
         
-        # 计算到每个类中心的距离
-        distances = np.zeros(self.num_commands)
-        for i in range(self.num_commands):
-            distances[i] = np.linalg.norm(features - self.class_means[i])
-        
-        # 选择最近的类
-        predicted_command = np.argmin(distances)
-        
-        # 计算置信度（使用反向距离作为近似）
-        min_distance = distances[predicted_command]
-        confidence = 1.0 / (1.0 + min_distance)
-        
-        return predicted_command, confidence
-    
-    def predict_batch(self, features: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        批量预测
-        
-        Args:
-            features: 特征矩阵 (样本数, 特征数)
+        # 确保特征是2D数组
+        if features.ndim == 1:
+            features = features.reshape(1, -1)
             
-        Returns:
-            predictions: 预测的命令 (样本数,)
-            confidences: 置信度 (样本数,)
-        """
-        predictions = []
-        confidences = []
-        
-        for feature in features:
-            pred, conf = self.predict(feature)
-            predictions.append(pred)
-            confidences.append(conf)
-        
-        return np.array(predictions), np.array(confidences)
+        # 预测
+        try:
+            probs = self.model.predict_proba(features)[0]
+            predicted_command = np.argmax(probs)
+            confidence = probs[predicted_command]
+            return predicted_command, confidence
+        except Exception as e:
+            logger.error(f"Prediction error: {e}")
+            return 0, 0.0
     
+    def save_model(self) -> None:
+        """保存模型到磁盘"""
+        try:
+            os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
+            joblib.dump(self.model, self.model_path)
+            logger.info(f"Model saved to {self.model_path}")
+        except Exception as e:
+            logger.error(f"Failed to save model: {e}")
+
+    def load_model(self) -> bool:
+        """从磁盘加载模型"""
+        if os.path.exists(self.model_path):
+            try:
+                self.model = joblib.load(self.model_path)
+                self.trained = True
+                logger.info(f"Model loaded from {self.model_path}")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to load model: {e}")
+        return False
+
     def get_command_name(self, command_id: int) -> str:
         """获取命令名称"""
-        if 0 <= command_id < self.num_commands:
+        if 0 <= command_id < len(self.command_names):
             return self.command_names[command_id]
-        return "Unknown Command"
+        return "Unknown"
 
 
 class SpeechRecognitionSystem:
@@ -351,16 +381,16 @@ class SpeechRecognitionSystem:
         dominant_freq = np.argmax(spectrum) * self.fs / len(signal)
         
         # 基于简单规则的分类
-        commands = ["Forward", "Backward", "Stop", "Rotate"]
+        commands = ["前进", "后退", "停止", "旋转"]
         
         if dominant_freq < 2000:
-            return commands[0]  # "Forward"
+            return commands[0]  # "前进"
         elif dominant_freq < 4000:
-            return commands[1]  # "Backward"
+            return commands[1]  # "后退"
         elif dominant_freq < 6000:
-            return commands[2]  # "Stop"
+            return commands[2]  # "停止"
         else:
-            return commands[3]  # "Rotate"
+            return commands[3]  # "旋转"
 
 
 if __name__ == "__main__":
