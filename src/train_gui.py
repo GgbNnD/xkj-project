@@ -322,8 +322,8 @@ class TrainingGUI:
                         # 1. 原始信号特征
                         mfcc = self.recognition_system.feature_extractor.extract_mfcc_features(signal)
                         if mfcc.shape[0] > 0:
-                            feat = np.mean(mfcc, axis=0)
-                            features.append(feat)
+                            # feat = np.mean(mfcc, axis=0) # LSTM 不需要平均
+                            features.append(mfcc)
                             labels.append(cmd_idx)
                             
                         # 2. 数据增强：模拟量化噪声 (模拟GUI中的处理流程)
@@ -336,8 +336,8 @@ class TrainingGUI:
                         
                         mfcc_aug = self.recognition_system.feature_extractor.extract_mfcc_features(reconstructed)
                         if mfcc_aug.shape[0] > 0:
-                            feat_aug = np.mean(mfcc_aug, axis=0)
-                            features.append(feat_aug)
+                            # feat_aug = np.mean(mfcc_aug, axis=0) # LSTM 不需要平均
+                            features.append(mfcc_aug)
                             labels.append(cmd_idx)
                             
                     except Exception as e:
@@ -347,11 +347,11 @@ class TrainingGUI:
                 self._log("没有有效数据")
                 return
                 
-            X = np.array(features)
+            # X = np.array(features) # LSTM 接受列表
             y = np.array(labels)
             
-            self._log(f"开始训练 MLP 模型 (样本数: {len(X)})...")
-            metrics = self.recognition_system.classifier.train(X, y)
+            self._log(f"开始训练 LSTM 模型 (样本数: {len(features)})...")
+            metrics = self.recognition_system.classifier.train(features, y)
             
             self._log(f"训练完成! 准确率: {metrics['test_acc']:.2f}")
             messagebox.showinfo("成功", f"模型训练完成！\n测试集准确率: {metrics['test_acc']:.2f}")

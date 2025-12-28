@@ -8,15 +8,37 @@ from typing import Tuple, List, Dict, Optional
 import logging
 import os
 import joblib
-# import speech_recognition as sr # 移除在线识别库
-# from sklearn.neural_network import MLPClassifier # 移除神经网络
-# from sklearn.preprocessing import StandardScaler
-# from sklearn.pipeline import Pipeline
-# from sklearn.model_selection import train_test_split
-# from sklearn.metrics import accuracy_score
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+class LSTMNet(nn.Module):
+    """LSTM 神经网络模型"""
+    def __init__(self, input_size, hidden_size, num_classes, num_layers=2):
+        super(LSTMNet, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=0.2)
+        self.fc = nn.Linear(hidden_size, num_classes)
+
+    def forward(self, x):
+        # x shape: (batch, seq_len, input_size)
+        # 初始化隐藏状态和细胞状态
+        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+
+        # 前向传播 LSTM
+        out, _ = self.lstm(x, (h0, c0))
+        
+        # 取最后一个时间步的输出
+        out = self.fc(out[:, -1, :])
+        return out
+
 
 
 class AudioFeatureExtractor:
@@ -208,132 +230,155 @@ class AudioFeatureExtractor:
 
 
 class CommandClassifier:
-    """命令分类器（基于传统特征匹配 - 最近邻/模板匹配）"""
+    """命令分类器（基于 PyTorch LSTM）"""
     
-    def __init__(self, num_commands: int = 4, model_path: str = 'data/speech_templates.pkl'):
+    def __init__(self, num_commands: int = 4, model_path: str = 'data/speech_model_lstm.pth'):
         """
         初始化命令分类器
         
         Args:
             num_commands: 命令数量
-            model_path: 模板保存路径
+            model_path: 模型保存路径
         """
         self.num_commands = num_commands
         self.command_names = ["前进", "后退", "停止", "旋转"]
         self.model_path = model_path
         
-        # 存储每个命令的特征模板 (centroid)
-        # 格式: {command_id: feature_vector}
-        self.templates = {} 
+        # LSTM 参数
+        self.input_size = 13  # MFCC 特征数量
+        self.hidden_size = 64
+        self.num_layers = 2
+        self.max_seq_length = 100 # 固定序列长度
+        
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.model = LSTMNet(self.input_size, self.hidden_size, num_commands, self.num_layers).to(self.device)
         self.trained = False
         
-        # 尝试加载已有模板
+        # 尝试加载已有模型
         self.load_model()
     
-    def train(self, features: np.ndarray, labels: np.ndarray) -> Dict[str, float]:
+    def _pad_sequence(self, sequence: np.ndarray) -> np.ndarray:
+        """将序列填充或截断到固定长度"""
+        if len(sequence) > self.max_seq_length:
+            return sequence[:self.max_seq_length]
+        elif len(sequence) < self.max_seq_length:
+            pad_width = self.max_seq_length - len(sequence)
+            return np.pad(sequence, ((0, pad_width), (0, 0)), mode='constant')
+        return sequence
+
+    def train(self, features_list: List[np.ndarray], labels: np.ndarray) -> Dict[str, float]:
         """
-        训练分类器 (实际上是计算并存储特征模板)
+        训练分类器
         
         Args:
-            features: 特征矩阵 (样本数, 特征数)
-            labels: 标签向量 (样本数,)
+            features_list: 特征列表，每个元素是 (seq_len, n_mfcc) 的数组
+            labels: 标签向量
             
         Returns:
-            metrics: 训练指标 (这里返回简单的统计信息)
+            metrics: 训练指标
         """
-        logger.info("Training Template Matching Classifier...")
+        logger.info(f"Training LSTM model on {self.device}...")
         
-        self.templates = {}
-        unique_labels = np.unique(labels)
+        # 预处理数据：填充序列
+        X_padded = np.array([self._pad_sequence(f) for f in features_list])
         
-        for label in unique_labels:
-            # 获取该标签的所有样本特征
-            label_features = features[labels == label]
+        # 转换为 Tensor
+        X_tensor = torch.FloatTensor(X_padded).to(self.device)
+        y_tensor = torch.LongTensor(labels).to(self.device)
+        
+        # 创建 DataLoader
+        dataset = TensorDataset(X_tensor, y_tensor)
+        dataloader = DataLoader(dataset, batch_size=16, shuffle=True)
+        
+        # 训练配置
+        criterion = nn.CrossEntropyLoss()
+        optimizer = optim.Adam(self.model.parameters(), lr=0.001)
+        num_epochs = 50
+        
+        self.model.train()
+        
+        for epoch in range(num_epochs):
+            total_loss = 0
+            correct = 0
+            total = 0
             
-            # 计算平均特征向量 (Centroid) 作为模板
-            # 这种方法假设同一命令的特征在空间中聚类紧密
-            centroid = np.mean(label_features, axis=0)
-            self.templates[int(label)] = centroid
+            for batch_X, batch_y in dataloader:
+                optimizer.zero_grad()
+                outputs = self.model(batch_X)
+                loss = criterion(outputs, batch_y)
+                loss.backward()
+                optimizer.step()
+                
+                total_loss += loss.item()
+                _, predicted = torch.max(outputs.data, 1)
+                total += batch_y.size(0)
+                correct += (predicted == batch_y).sum().item()
             
-            logger.info(f"Created template for command {label} ({self.get_command_name(label)}) using {len(label_features)} samples")
+            if (epoch + 1) % 10 == 0:
+                acc = 100 * correct / total
+                logger.info(f'Epoch [{epoch+1}/{num_epochs}], Loss: {total_loss:.4f}, Accuracy: {acc:.2f}%')
         
         self.trained = True
         self.save_model()
         
-        # 简单的回测准确率
-        correct = 0
-        for i in range(len(features)):
-            pred, _ = self.predict(features[i])
-            if pred == labels[i]:
-                correct += 1
-        acc = correct / len(features)
-        
-        return {'train_acc': acc, 'test_acc': acc} # 传统方法没有划分验证集
+        return {'train_acc': correct / total, 'test_acc': correct / total} # 简化，暂无验证集
     
     def predict(self, features: np.ndarray) -> Tuple[int, float]:
         """
-        预测命令 (基于最小欧氏距离)
+        预测命令
         
         Args:
-            features: 特征向量 (特征数,)
+            features: 特征序列 (seq_len, n_mfcc)
             
         Returns:
             predicted_command: 预测的命令索引
-            confidence: 置信度 (基于距离的倒数)
+            confidence: 置信度
         """
-        if not self.trained or not self.templates:
-            logger.warning("Classifier not trained (no templates), returning random prediction")
+        if not self.trained:
+            logger.warning("Classifier not trained, returning random prediction")
             return np.random.randint(0, self.num_commands), 0.0
         
-        # 确保特征是1D数组
-        if features.ndim > 1:
-            features = features.flatten()
+        self.model.eval()
+        with torch.no_grad():
+            # 预处理
+            features_padded = self._pad_sequence(features)
+            # 增加 batch 维度: (1, seq_len, input_size)
+            input_tensor = torch.FloatTensor(features_padded).unsqueeze(0).to(self.device)
             
-        min_dist = float('inf')
-        best_cmd = -1
-        
-        # 计算到每个模板的距离
-        distances = {}
-        for cmd_id, template in self.templates.items():
-            # 欧氏距离
-            dist = np.linalg.norm(features - template)
-            distances[cmd_id] = dist
+            outputs = self.model(input_tensor)
+            probs = torch.nn.functional.softmax(outputs, dim=1)
             
-            if dist < min_dist:
-                min_dist = dist
-                best_cmd = cmd_id
-        
-        # 计算简单的置信度 (距离越小置信度越高)
-        # 使用 softmax 类似的转换或者简单的归一化
-        # 这里使用简单的反比: confidence = 1 / (1 + dist)
-        confidence = 1.0 / (1.0 + min_dist)
-        
-        # 记录距离以便调试
-        dist_str = ", ".join([f"{self.get_command_name(c)}: {d:.2f}" for c, d in distances.items()])
-        logger.info(f"Distances: {dist_str} -> Best: {self.get_command_name(best_cmd)}")
+            confidence, predicted = torch.max(probs, 1)
             
-        return best_cmd, confidence
+            cmd_id = predicted.item()
+            conf_val = confidence.item()
+            
+            # 详细日志
+            probs_list = probs[0].cpu().numpy()
+            probs_str = ", ".join([f"{self.command_names[i]}: {p:.2f}" for i, p in enumerate(probs_list)])
+            logger.info(f"LSTM Prediction: {probs_str}")
+            
+            return cmd_id, conf_val
     
     def save_model(self) -> None:
-        """保存模板到磁盘"""
+        """保存模型到磁盘"""
         try:
             os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
-            joblib.dump(self.templates, self.model_path)
-            logger.info(f"Templates saved to {self.model_path}")
+            torch.save(self.model.state_dict(), self.model_path)
+            logger.info(f"LSTM Model saved to {self.model_path}")
         except Exception as e:
-            logger.error(f"Failed to save templates: {e}")
+            logger.error(f"Failed to save model: {e}")
 
     def load_model(self) -> bool:
-        """从磁盘加载模板"""
+        """从磁盘加载模型"""
         if os.path.exists(self.model_path):
             try:
-                self.templates = joblib.load(self.model_path)
-                if self.templates:
-                    self.trained = True
-                    logger.info(f"Templates loaded from {self.model_path}")
-                    return True
+                self.model.load_state_dict(torch.load(self.model_path, map_location=self.device))
+                self.trained = True
+                logger.info(f"LSTM Model loaded from {self.model_path}")
+                return True
             except Exception as e:
-                logger.error(f"Failed to load templates: {e}")
+                logger.error(f"Failed to load model: {e}")
         return False
 
     def get_command_name(self, command_id: int) -> str:
@@ -379,18 +424,22 @@ class SpeechRecognitionSystem:
             confidence: 置信度
         """
         try:
-            # 提取特征
+            # 提取特征 (返回序列)
             mfcc_features = self.feature_extractor.extract_mfcc_features(signal)
             
-            # 聚合特征（取平均）
-            if mfcc_features.shape[0] > 0:
-                aggregated_features = np.mean(mfcc_features, axis=0)
-            else:
-                aggregated_features = np.zeros(13)
+            # 不再聚合特征，直接使用序列
+            # if mfcc_features.shape[0] > 0:
+            #     aggregated_features = np.mean(mfcc_features, axis=0)
+            # else:
+            #     aggregated_features = np.zeros(13)
             
+            if mfcc_features.shape[0] == 0:
+                logger.warning("No MFCC features extracted")
+                return "Unknown", 0.0
+
             # 预测命令
             if self.classifier.trained:
-                command_id, confidence = self.classifier.predict(aggregated_features)
+                command_id, confidence = self.classifier.predict(mfcc_features)
                 command = self.classifier.get_command_name(command_id)
             else:
                 # 如果未训练，使用简单的启发式方法

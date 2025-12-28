@@ -80,10 +80,10 @@ class ModelTrainer:
                     signal, _ = sf.read(filepath)
                     # 提取特征
                     mfcc = self.recognition_system.feature_extractor.extract_mfcc_features(signal)
-                    # 聚合特征 (取平均)
+                    # 聚合特征 (取平均) - LSTM 不需要平均
                     if mfcc.shape[0] > 0:
-                        feat = np.mean(mfcc, axis=0)
-                        features.append(feat)
+                        # feat = np.mean(mfcc, axis=0)
+                        features.append(mfcc)
                         labels.append(cmd_idx)
                 except Exception as e:
                     logger.error(f"Error processing {filepath}: {e}")
@@ -92,13 +92,13 @@ class ModelTrainer:
             print("没有找到训练数据!")
             return
             
-        X = np.array(features)
+        # X = np.array(features) # LSTM 接受列表
         y = np.array(labels)
         
-        print(f"特征矩阵形状: {X.shape}")
+        print(f"特征样本数: {len(features)}")
         
         # 训练
-        metrics = self.recognition_system.classifier.train(X, y)
+        metrics = self.recognition_system.classifier.train(features, y)
         print(f"训练完成! 准确率: {metrics['test_acc']:.2f}")
 
 def main():

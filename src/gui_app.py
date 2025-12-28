@@ -4,7 +4,7 @@ GUI Application for Remote Voice Control System
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import numpy as np
 import threading
 import time
@@ -73,6 +73,9 @@ class VoiceControlGUI:
         self.btn_record.pack(side=tk.LEFT, padx=5)
         self.btn_record.bind('<ButtonPress-1>', self._start_recording)
         self.btn_record.bind('<ButtonRelease-1>', self._stop_recording)
+        
+        self.btn_file = ttk.Button(control_frame, text="选择文件 (Select File)", command=self._select_file)
+        self.btn_file.pack(side=tk.LEFT, padx=5)
         
         self.btn_play = ttk.Button(control_frame, text="回放录音 (Playback)", command=self._play_recording, state=tk.DISABLED)
         self.btn_play.pack(side=tk.LEFT, padx=5)
@@ -177,6 +180,31 @@ class VoiceControlGUI:
                 self._log(f"播放失败: {e}")
         else:
             self._log("没有可播放的解码信号")
+
+    def _select_file(self):
+        """选择音频文件作为输入"""
+        file_path = filedialog.askopenfilename(
+            title="选择音频文件",
+            filetypes=[("Audio Files", "*.wav *.flac"), ("All files", "*.*")]
+        )
+        
+        if file_path:
+            self._log(f"正在加载文件: {file_path}...")
+            # 在新线程中加载，避免卡顿
+            threading.Thread(target=self._load_file_task, args=(file_path,)).start()
+
+    def _load_file_task(self, file_path):
+        try:
+            # 使用信号处理模块读取文件
+            signal, fs = self.signal_processor.signal_sampling(file_path)
+            
+            self._log(f"文件加载成功 (fs={fs}, len={len(signal)})")
+            # 发送到处理队列
+            self.processing_queue.put((signal, fs))
+            
+        except Exception as e:
+            self._log(f"加载文件失败: {e}")
+            self.root.after(0, lambda: messagebox.showerror("错误", f"无法加载文件: {e}"))
 
     def _log(self, message):
         self.txt_log.insert(tk.END, f"{time.strftime('%H:%M:%S')} - {message}\n")
