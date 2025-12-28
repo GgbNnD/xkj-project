@@ -240,11 +240,11 @@ class CommandClassifier:
             metrics: 训练指标
         """
         # 创建MLP管道：标准化 -> MLP
-        # 使用两个隐藏层 (128, 64)，最大迭代次数 1000
+        # 使用三个隐藏层 (256, 128, 64)，最大迭代次数 2000
         self.model = Pipeline([
             ('scaler', StandardScaler()),
-            ('mlp', MLPClassifier(hidden_layer_sizes=(128, 64), 
-                                max_iter=1000, 
+            ('mlp', MLPClassifier(hidden_layer_sizes=(256, 128, 64), 
+                                max_iter=2000, 
                                 activation='relu',
                                 solver='adam',
                                 random_state=42,
