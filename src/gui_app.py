@@ -95,6 +95,12 @@ class VoiceControlGUI:
         self.lbl_snr_val.grid(row=0, column=2, padx=5)
         self.scale_snr.configure(command=lambda v: self.lbl_snr_val.configure(text=f"{float(v):.1f} dB"))
         
+        # 识别模式选择
+        ttk.Label(settings_frame, text="识别模式:").grid(row=1, column=0, padx=5, pady=5)
+        self.combo_mode = ttk.Combobox(settings_frame, values=["本地模型 (Local AI)", "在线英文 (Online English)"], state="readonly")
+        self.combo_mode.set("本地模型 (Local AI)")
+        self.combo_mode.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+        
         # 3. 波形显示区
         plot_frame = ttk.LabelFrame(left_panel, text="信号波形 (Signal Waveforms)", padding="5")
         plot_frame.pack(fill=tk.BOTH, expand=True, pady=5)
@@ -287,10 +293,13 @@ class VoiceControlGUI:
         
         # 调用系统处理
         snr = self.scale_snr.get()
-        self._log(f"正在处理信号 (SNR={snr:.1f}dB)...")
+        mode = self.combo_mode.get()
+        self._log(f"正在处理信号 (SNR={snr:.1f}dB, Mode={mode})...")
         
         try:
-            result = self.system.process_audio_signal(signal, fs, snr_db=snr)
+            # 传递识别模式
+            use_online = "Online" in mode
+            result = self.system.process_audio_signal(signal, fs, snr_db=snr, use_online=use_online)
             
             if result['overall_success']:
                 summary = result['summary']

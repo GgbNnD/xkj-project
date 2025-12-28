@@ -106,7 +106,7 @@ class RemoteVoiceControlSystem:
         
         self.control_system = ControlSystem(system_type='motor')
     
-    def process_audio_signal(self, sampled_signal: np.ndarray, fs: int, snr_db: float = None) -> dict:
+    def process_audio_signal(self, sampled_signal: np.ndarray, fs: int, snr_db: float = None, use_online: bool = False) -> dict:
         """
         处理音频信号数据（内存中）
         
@@ -114,6 +114,7 @@ class RemoteVoiceControlSystem:
             sampled_signal: 采样后的音频信号
             fs: 采样频率
             snr_db: 信噪比
+            use_online: 是否使用在线识别
             
         Returns:
             results: 处理结果字典
@@ -229,7 +230,12 @@ class RemoteVoiceControlSystem:
             reconstructed_signal = self.signal_processor.bits_to_quantization(
                 source_decoded.astype(float), signal_min, signal_max
             )
-            command, confidence = self.speech_recognizer.recognize_command(reconstructed_signal)
+            
+            if use_online:
+                command, confidence = self.speech_recognizer.recognize_google(reconstructed_signal)
+            else:
+                command, confidence = self.speech_recognizer.recognize_command(reconstructed_signal)
+                
             stage_results = {
                 'recognized_command': command,
                 'confidence': float(confidence),

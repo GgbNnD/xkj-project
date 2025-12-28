@@ -8,6 +8,7 @@ from typing import Tuple, List, Dict, Optional
 import logging
 import os
 import joblib
+import speech_recognition as sr
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
@@ -333,6 +334,8 @@ class CommandClassifier:
         return "Unknown"
 
 
+import speech_recognition as sr
+
 class SpeechRecognitionSystem:
     """完整的语音识别系统"""
     
@@ -347,6 +350,50 @@ class SpeechRecognitionSystem:
         self.fs = fs
         self.feature_extractor = AudioFeatureExtractor(fs)
         self.classifier = CommandClassifier(num_commands)
+        self.recognizer = sr.Recognizer()
+        
+    def recognize_google(self, signal: np.ndarray) -> Tuple[str, float]:
+        """
+        使用 Google Speech Recognition API 进行识别 (需要联网)
+        
+        Args:
+            signal: 音频信号
+            
+        Returns:
+            command: 识别的命令
+            confidence: 置信度 (模拟值，API不总是返回)
+        """
+        try:
+            # 将 float32 (-1.0 到 1.0) 转换为 int16 PCM
+            signal_int16 = (signal * 32767).astype(np.int16)
+            audio_data = sr.AudioData(signal_int16.tobytes(), self.fs, 2)
+            
+            # 识别英文
+            text = self.recognizer.recognize_google(audio_data, language="en-US")
+            logger.info(f"Google Speech Recognition result: {text}")
+            
+            # 映射到系统命令
+            text = text.lower()
+            if "forward" in text or "go" in text or "move" in text:
+                return "前进", 0.95
+            elif "back" in text or "backward" in text or "retreat" in text:
+                return "后退", 0.95
+            elif "stop" in text or "halt" in text or "wait" in text:
+                return "停止", 0.95
+            elif "rotate" in text or "turn" in text or "spin" in text:
+                return "旋转", 0.95
+            else:
+                return "Unknown", 0.0
+                
+        except sr.UnknownValueError:
+            logger.warning("Google Speech Recognition could not understand audio")
+            return "Unknown", 0.0
+        except sr.RequestError as e:
+            logger.error(f"Could not request results from Google Speech Recognition service; {e}")
+            return "Error", 0.0
+        except Exception as e:
+            logger.error(f"Error in google recognition: {e}")
+            return "Error", 0.0
     
     def recognize_command(self, signal: np.ndarray) -> Tuple[str, float]:
         """
@@ -384,6 +431,55 @@ class SpeechRecognitionSystem:
         except Exception as e:
             logger.error(f"Error in command recognition: {e}")
             return "Unknown Command", 0.0
+
+    def recognize_google(self, signal: np.ndarray) -> Tuple[str, float]:
+        """
+        使用 Google Web Speech API 进行在线语音识别 (支持英文)
+        
+        Args:
+            signal: 音频信号 (numpy array)
+            
+        Returns:
+            command: 识别的命令名称 (映射回中文命令)
+            confidence: 置信度
+        """
+        recognizer = sr.Recognizer()
+        
+        # 将 numpy float array 转换为 int16 bytes
+        # 确保信号在 -1 到 1 之间
+        signal = np.clip(signal, -1.0, 1.0)
+        signal_int16 = (signal * 32767).astype(np.int16)
+        
+        # 创建 AudioData 对象
+        # sample_width=2 (16-bit), sample_rate=self.fs
+        audio_data = sr.AudioData(signal_int16.tobytes(), self.fs, 2)
+        
+        try:
+            logger.info("Sending audio to Google Speech Recognition...")
+            # 使用 Google Web Speech API
+            text = recognizer.recognize_google(audio_data, language="en-US")
+            logger.info(f"Google Speech Recognition result: {text}")
+            
+            # 简单的关键词映射
+            text = text.lower()
+            if "forward" in text or "go" in text or "move" in text:
+                return "前进", 0.95
+            elif "back" in text or "backward" in text or "reverse" in text:
+                return "后退", 0.95
+            elif "stop" in text or "halt" in text or "wait" in text:
+                return "停止", 0.95
+            elif "rotate" in text or "turn" in text or "spin" in text:
+                return "旋转", 0.95
+            else:
+                logger.info(f"Unmapped command: {text}")
+                return "未知命令", 0.0
+                
+        except sr.UnknownValueError:
+            logger.warning("Google Speech Recognition could not understand audio")
+            return "无法识别", 0.0
+        except sr.RequestError as e:
+            logger.error(f"Could not request results from Google Speech Recognition service; {e}")
+            return "服务错误", 0.0
     
     def _heuristic_recognition(self, signal: np.ndarray) -> str:
         """
