@@ -234,6 +234,7 @@ class RemoteVoiceControlSystem:
                 'recognized_command': command,
                 'confidence': float(confidence),
                 'reconstructed_signal_length': len(reconstructed_signal),
+                'reconstructed_signal': reconstructed_signal,
             }
             results['stages']['speech_recognition'] = stage_results
             

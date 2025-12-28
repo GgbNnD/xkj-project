@@ -38,6 +38,7 @@ class VoiceControlGUI:
         self.recording_thread = None
         self.processing_queue = queue.Queue()
         self.last_recorded_signal = None
+        self.last_decoded_signal = None
         self.last_fs = 44100
         
         # 创建界面
@@ -76,6 +77,9 @@ class VoiceControlGUI:
         self.btn_play = ttk.Button(control_frame, text="回放录音 (Playback)", command=self._play_recording, state=tk.DISABLED)
         self.btn_play.pack(side=tk.LEFT, padx=5)
         
+        self.btn_play_decoded = ttk.Button(control_frame, text="播放解码 (Play Decoded)", command=self._play_decoded, state=tk.DISABLED)
+        self.btn_play_decoded.pack(side=tk.LEFT, padx=5)
+        
         self.lbl_status = ttk.Label(control_frame, text="就绪", foreground="green")
         self.lbl_status.pack(side=tk.LEFT, padx=10)
         
@@ -92,14 +96,21 @@ class VoiceControlGUI:
         self.scale_snr.configure(command=lambda v: self.lbl_snr_val.configure(text=f"{float(v):.1f} dB"))
         
         # 3. 波形显示区
-        plot_frame = ttk.LabelFrame(left_panel, text="实时波形", padding="5")
+        plot_frame = ttk.LabelFrame(left_panel, text="信号波形 (Signal Waveforms)", padding="5")
         plot_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
-        self.fig = Figure(figsize=(5, 4), dpi=100)
-        self.ax = self.fig.add_subplot(111)
-        self.ax.set_title("Audio Waveform")
-        self.ax.set_ylim(-1, 1)
-        self.ax.grid(True)
+        self.fig = Figure(figsize=(5, 6), dpi=100)
+        self.ax1 = self.fig.add_subplot(211)
+        self.ax1.set_title("Recorded Waveform")
+        self.ax1.set_ylim(-1, 1)
+        self.ax1.grid(True)
+        
+        self.ax2 = self.fig.add_subplot(212)
+        self.ax2.set_title("Decoded Waveform (After Transmission)")
+        self.ax2.set_ylim(-1, 1)
+        self.ax2.grid(True)
+        
+        self.fig.tight_layout()
         
         self.canvas = FigureCanvasTkAgg(self.fig, master=plot_frame)
         self.canvas.draw()
@@ -150,6 +161,17 @@ class VoiceControlGUI:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.txt_log.config(yscrollcommand=scrollbar.set)
         
+    def _play_decoded(self):
+        """回放解码后的信号"""
+        if self.last_decoded_signal is not None:
+            self._log("正在播放解码信号...")
+            try:
+                sd.play(self.last_decoded_signal, self.last_fs)
+            except Exception as e:
+                self._log(f"播放失败: {e}")
+        else:
+            self._log("没有可播放的解码信号")
+
     def _log(self, message):
         self.txt_log.insert(tk.END, f"{time.strftime('%H:%M:%S')} - {message}\n")
         self.txt_log.see(tk.END)
@@ -244,11 +266,17 @@ class VoiceControlGUI:
         # 启用回放按钮
         self.root.after(0, lambda: self.btn_play.configure(state=tk.NORMAL))
         
-        # 更新波形图
-        self.ax.clear()
-        self.ax.plot(signal)
-        self.ax.set_title("Recorded Waveform")
-        self.ax.set_ylim(-1, 1)
+        # 更新波形图 (录音)
+        self.ax1.clear()
+        self.ax1.plot(signal)
+        self.ax1.set_title("Recorded Waveform")
+        self.ax1.set_ylim(-1, 1)
+        self.ax1.grid(True)
+        
+        # 清空解码波形
+        self.ax2.clear()
+        self.ax2.set_title("Decoded Waveform (Processing...)")
+        self.ax2.grid(True)
         self.canvas.draw()
         
         # 调用系统处理
@@ -261,6 +289,22 @@ class VoiceControlGUI:
             if result['overall_success']:
                 summary = result['summary']
                 command = summary['recognized_command']
+                
+                # 获取解码后的信号
+                if 'reconstructed_signal' in result['stages']['speech_recognition']:
+                    decoded_signal = result['stages']['speech_recognition']['reconstructed_signal']
+                    self.last_decoded_signal = decoded_signal
+                    
+                    # 更新解码波形
+                    self.ax2.clear()
+                    self.ax2.plot(decoded_signal, color='orange')
+                    self.ax2.set_title(f"Decoded Waveform (SNR={snr}dB)")
+                    self.ax2.set_ylim(-1, 1)
+                    self.ax2.grid(True)
+                    self.canvas.draw()
+                    
+                    # 启用播放解码按钮
+                    self.root.after(0, lambda: self.btn_play_decoded.configure(state=tk.NORMAL))
                 
                 # 更新界面
                 self.root.after(0, lambda: self._update_ui_result(command, result))
