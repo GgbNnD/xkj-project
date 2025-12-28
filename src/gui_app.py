@@ -190,34 +190,31 @@ class VoiceControlGUI:
         
     def _record_task(self):
         # 实际录音逻辑
-        # 这里我们模拟录音，或者使用 signal_processor.record_audio
-        # 由于 record_audio 是阻塞的，我们需要修改它或者分段录制
-        # 为了简单，我们这里录制固定时长，或者直到松开按钮
-        
-        # 注意：由于 sounddevice.rec 是非阻塞的，我们可以利用这一点
-        # 但为了配合 "按住说话"，我们需要一个循环读取流的方法
-        
-        # 简化实现：录制固定时长（例如最长3秒），如果提前松开则截断
-        # 但更好的方式是使用 sd.InputStream
-        
         import sounddevice as sd
         
         fs = 44100
         max_duration = 5 # 最长5秒
         
         try:
+            # 强制停止之前的流，防止干扰
+            sd.stop()
+            time.sleep(0.1)
+            
             recording = sd.rec(int(max_duration * fs), samplerate=fs, channels=1, dtype='float64')
             
             # 等待直到 is_recording 变为 False
             start_time = time.time()
             while self.is_recording and (time.time() - start_time < max_duration):
-                time.sleep(0.1)
+                time.sleep(0.05)
             
             sd.stop()
             
             # 截取实际录制的长度
             actual_duration = time.time() - start_time
             actual_samples = int(actual_duration * fs)
+            # 确保不越界
+            actual_samples = min(actual_samples, len(recording))
+            
             recorded_signal = recording[:actual_samples].flatten()
             
             # 发送到处理队列
