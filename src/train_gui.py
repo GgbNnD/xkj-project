@@ -20,6 +20,7 @@ from datetime import datetime
 
 # 导入系统模块
 from speech_recognition import SpeechRecognitionSystem, CommandClassifier
+from signal_processing import SignalProcessing
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -50,6 +51,7 @@ class TrainingGUI:
         
         # 初始化识别系统（用于特征提取）
         self.recognition_system = SpeechRecognitionSystem(fs=self.fs)
+        self.signal_processor = SignalProcessing(fs=self.fs, quantization_bits=8)
         
         # 创建界面
         self._create_layout()
@@ -304,7 +306,7 @@ class TrainingGUI:
         
     def _train_task(self):
         try:
-            self._log("开始提取特征...")
+            self._log("开始提取特征 (包含数据增强)...")
             features = []
             labels = []
             
@@ -316,11 +318,28 @@ class TrainingGUI:
                     filepath = os.path.join(cmd_dir, f)
                     try:
                         signal, _ = sf.read(filepath)
+                        
+                        # 1. 原始信号特征
                         mfcc = self.recognition_system.feature_extractor.extract_mfcc_features(signal)
                         if mfcc.shape[0] > 0:
                             feat = np.mean(mfcc, axis=0)
                             features.append(feat)
                             labels.append(cmd_idx)
+                            
+                        # 2. 数据增强：模拟量化噪声 (模拟GUI中的处理流程)
+                        # 量化
+                        quantized = self.signal_processor.signal_quantization(signal)
+                        # 转换为比特再转回 (模拟完整编解码过程)
+                        bits = self.signal_processor.quantization_to_bits(quantized)
+                        s_min, s_max = np.min(quantized), np.max(quantized)
+                        reconstructed = self.signal_processor.bits_to_quantization(bits, s_min, s_max)
+                        
+                        mfcc_aug = self.recognition_system.feature_extractor.extract_mfcc_features(reconstructed)
+                        if mfcc_aug.shape[0] > 0:
+                            feat_aug = np.mean(mfcc_aug, axis=0)
+                            features.append(feat_aug)
+                            labels.append(cmd_idx)
+                            
                     except Exception as e:
                         self._log(f"处理文件错误 {f}: {e}")
             
@@ -331,7 +350,7 @@ class TrainingGUI:
             X = np.array(features)
             y = np.array(labels)
             
-            self._log(f"开始训练SVM模型 (样本数: {len(X)})...")
+            self._log(f"开始训练 MLP 模型 (样本数: {len(X)})...")
             metrics = self.recognition_system.classifier.train(X, y)
             
             self._log(f"训练完成! 准确率: {metrics['test_acc']:.2f}")

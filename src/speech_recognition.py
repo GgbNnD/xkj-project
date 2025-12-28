@@ -8,7 +8,7 @@ from typing import Tuple, List, Dict, Optional
 import logging
 import os
 import joblib
-from sklearn.svm import SVC
+from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import train_test_split
@@ -207,7 +207,7 @@ class AudioFeatureExtractor:
 
 
 class CommandClassifier:
-    """命令分类器（基于SVM）"""
+    """命令分类器（基于神经网络 MLP）"""
     
     def __init__(self, num_commands: int = 4, model_path: str = 'data/speech_model.pkl'):
         """
@@ -238,10 +238,17 @@ class CommandClassifier:
         Returns:
             metrics: 训练指标
         """
-        # 创建SVM管道：标准化 -> SVM
+        # 创建MLP管道：标准化 -> MLP
+        # 使用两个隐藏层 (128, 64)，最大迭代次数 1000
         self.model = Pipeline([
             ('scaler', StandardScaler()),
-            ('svc', SVC(kernel='rbf', probability=True, class_weight='balanced'))
+            ('mlp', MLPClassifier(hidden_layer_sizes=(128, 64), 
+                                max_iter=1000, 
+                                activation='relu',
+                                solver='adam',
+                                random_state=42,
+                                early_stopping=True,
+                                validation_fraction=0.1))
         ])
         
         # 划分训练集和测试集
@@ -250,7 +257,7 @@ class CommandClassifier:
         )
         
         # 训练模型
-        logger.info(f"Training SVM model with {len(X_train)} samples...")
+        logger.info(f"Training MLP model with {len(X_train)} samples...")
         self.model.fit(X_train, y_train)
         
         # 评估模型
