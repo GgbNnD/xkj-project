@@ -13,6 +13,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 import logging
 import queue
+import sounddevice as sd
 
 # 导入系统模块
 from main import RemoteVoiceControlSystem
@@ -36,6 +37,8 @@ class VoiceControlGUI:
         self.is_recording = False
         self.recording_thread = None
         self.processing_queue = queue.Queue()
+        self.last_recorded_signal = None
+        self.last_fs = 44100
         
         # 创建界面
         self._create_layout()
@@ -69,6 +72,9 @@ class VoiceControlGUI:
         self.btn_record.pack(side=tk.LEFT, padx=5)
         self.btn_record.bind('<ButtonPress-1>', self._start_recording)
         self.btn_record.bind('<ButtonRelease-1>', self._stop_recording)
+        
+        self.btn_play = ttk.Button(control_frame, text="回放录音 (Playback)", command=self._play_recording, state=tk.DISABLED)
+        self.btn_play.pack(side=tk.LEFT, padx=5)
         
         self.lbl_status = ttk.Label(control_frame, text="就绪", foreground="green")
         self.lbl_status.pack(side=tk.LEFT, padx=10)
@@ -148,6 +154,18 @@ class VoiceControlGUI:
         self.txt_log.insert(tk.END, f"{time.strftime('%H:%M:%S')} - {message}\n")
         self.txt_log.see(tk.END)
         
+    def _play_recording(self):
+        """回放最后一次录音"""
+        if self.last_recorded_signal is not None:
+            self._log("正在回放录音...")
+            try:
+                sd.play(self.last_recorded_signal, self.last_fs)
+                # sd.wait() # 不阻塞UI
+            except Exception as e:
+                self._log(f"回放失败: {e}")
+        else:
+            self._log("没有可回放的录音")
+
     def _start_recording(self, event=None):
         if self.is_recording:
             return
@@ -222,6 +240,13 @@ class VoiceControlGUI:
                 print(f"Update loop error: {e}")
 
     def _process_audio(self, signal, fs):
+        # 保存最后一次录音
+        self.last_recorded_signal = signal
+        self.last_fs = fs
+        
+        # 启用回放按钮
+        self.root.after(0, lambda: self.btn_play.configure(state=tk.NORMAL))
+        
         # 更新波形图
         self.ax.clear()
         self.ax.plot(signal)
