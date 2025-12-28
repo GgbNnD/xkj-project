@@ -31,8 +31,15 @@ class ModelTrainer:
             time.sleep(1)
         
         print("开始录音! 请说话...")
-        recording = sd.rec(int(self.duration * self.fs), samplerate=self.fs, channels=1)
-        sd.wait()
+        
+        # 强制停止之前的流，防止干扰
+        sd.stop()
+        # 增加一点缓冲时间
+        time.sleep(0.2)
+        
+        # 使用 blocking=True 确保录音完全执行
+        recording = sd.rec(int(self.duration * self.fs), samplerate=self.fs, channels=1, blocking=True)
+        
         print("录音结束.")
         
         # 保存文件
