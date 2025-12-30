@@ -446,6 +446,31 @@ class VoiceControlGUI:
             
             stages = result['stages']
             
+            # --- Statistics Section ---
+            stats_frame = ttk.LabelFrame(window, text="Statistics Summary", padding="10")
+            stats_frame.pack(fill=tk.X, padx=10, pady=5)
+            
+            # Huffman Stats
+            huff_stats = stages['source_encoding']
+            huff_text = (
+                f"Huffman Encoding:\n"
+                f"  Input Bits: {huff_stats['original_bits']}\n"
+                f"  Output Bits: {huff_stats['encoded_bits']}\n"
+                f"  Compression Ratio: {huff_stats['compression_ratio']:.4f}\n"
+                f"  Avg Code Length: {huff_stats['avg_code_length']:.4f}"
+            )
+            ttk.Label(stats_frame, text=huff_text, font=("Courier", 10)).pack(side=tk.LEFT, padx=20)
+            
+            # Channel Stats (BER)
+            demod_stats = stages['demodulation']
+            ber_text = (
+                f"Channel Transmission:\n"
+                f"  SNR: {result['snr_db']} dB\n"
+                f"  Bit Errors: {demod_stats['bit_errors']}\n"
+                f"  BER: {demod_stats['ber']:.6f}"
+            )
+            ttk.Label(stats_frame, text=ber_text, font=("Courier", 10)).pack(side=tk.LEFT, padx=20)
+            
             # 准备绘图数据
             # (标题, 信号, 采样率, 是否绘制语谱图)
             plot_data = [
