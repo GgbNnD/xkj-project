@@ -91,10 +91,11 @@ def test_channel_encoding():
     print("="*60)
     
     try:
-        coder = RSCoder(n=255, k=223)
+        # 使用更强的纠错能力 k=191 (原为223)
+        coder = RSCoder(n=255, k=191)
         
-        # 生成测试比特 (223 bytes = 1784 bits)
-        test_bits = np.random.randint(0, 2, 1784)
+        # 生成测试比特 (191 bytes = 1528 bits)
+        test_bits = np.random.randint(0, 2, 1528)
         
         # 编码
         encoded = coder.encode(test_bits)
@@ -105,24 +106,23 @@ def test_channel_encoding():
         
         # 解码无错
         decoded = coder.decode(encoded)
-        # RS解码可能包含填充，截断比较
         decoded = decoded[:len(test_bits)]
         errors_no_noise = np.sum(decoded != test_bits)
         print(f"  Decoding errors (no noise): {errors_no_noise}")
         
         # 添加错误进行测试
-        # RS(255,223) 可以纠正 16 个字节错误
+        # RS(255,191) 可以纠正 (255-191)/2 = 32 个字节错误
         encoded_with_error = encoded.copy()
-        # 引入 5 个字节错误 (分散在不同字节)
-        for i in range(5):
-            idx = i * 8 + 2 # 每个字节的第3位翻转
+        # 引入 20 个字节错误
+        for i in range(20):
+            idx = i * 8 + 2
             if idx < len(encoded_with_error):
                 encoded_with_error[idx] = 1 - encoded_with_error[idx]
         
         decoded_with_error = coder.decode(encoded_with_error)
         decoded_with_error = decoded_with_error[:len(test_bits)]
         errors_with_noise = np.sum(decoded_with_error != test_bits)
-        print(f"  Decoding errors (with 5 byte errors): {errors_with_noise}")
+        print(f"  Decoding errors (with 20 byte errors): {errors_with_noise}")
         print(f"✓ RS decoding successful")
         
         return True

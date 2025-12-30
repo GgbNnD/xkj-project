@@ -59,7 +59,7 @@ class RemoteVoiceControlSystem:
             'fs': 44100,                    # 采样频率
             'quantization_bits': 8,        # 量化位数
             'channel_code_n': 255,         # RS码字长
-            'channel_code_k': 223,         # RS信息位
+            'channel_code_k': 191,         # RS信息位 (增强抗干扰能力)
             'snr_db': 20,                  # 信噪比
             'num_commands': 4,             # 命令数量
         }
