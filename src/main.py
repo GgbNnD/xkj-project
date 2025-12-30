@@ -56,11 +56,13 @@ class RemoteVoiceControlSystem:
         """
         # 默认配置
         self.config = {
-            'fs': 20000,                    # 采样频率
+            'fs': 44100,                    # 采样频率
             'quantization_bits': 8,        # 量化位数
             'channel_code_n': 255,         # RS码字长
             'channel_code_k': 191,         # RS信息位 (增强抗干扰能力)
             'snr_db': 20,                  # 信噪比
+            'fc': 10000,                   # 载波频率 (Hz)
+            'sps': 8,                      # 每符号采样数
             'num_commands': 4,             # 命令数量
         }
         
@@ -97,7 +99,11 @@ class RemoteVoiceControlSystem:
             k=self.config['channel_code_k']
         )
         
-        self.modem = Modulation()
+        self.modem = Modulation(
+            fs=self.config['fs'],
+            fc=self.config.get('fc', 10000),
+            sps=self.config.get('sps', 8)
+        )
         
         self.speech_recognizer = SpeechRecognitionSystem(
             fs=self.config['fs'],
