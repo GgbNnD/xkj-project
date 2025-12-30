@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 from signal_processing import SignalProcessing
 from source_encoding import SourceEncoding
-from channel_encoding import BCHCoder
+from channel_encoding import RSCoder
 from modulation import Modulation
 from speech_recognition_system import SpeechRecognitionSystem
 from control_system import ControlSystem
@@ -87,40 +87,49 @@ def test_source_encoding():
 def test_channel_encoding():
     """测试信道编码模块"""
     print("\n" + "="*60)
-    print("TEST 3: Channel Encoding Module (BCH)")
+    print("TEST 3: Channel Encoding Module (Reed-Solomon)")
     print("="*60)
     
     try:
-        coder = BCHCoder(n=15, k=7)
+        coder = RSCoder(n=255, k=223)
         
-        # 生成测试比特
-        test_bits = np.array([1, 0, 1, 1, 0, 1, 0] * 100, dtype=int)
+        # 生成测试比特 (223 bytes = 1784 bits)
+        test_bits = np.random.randint(0, 2, 1784)
         
         # 编码
         encoded = coder.encode(test_bits)
-        print(f"✓ BCH encoding successful")
+        print(f"✓ RS encoding successful")
         print(f"  Input bits: {len(test_bits)}")
         print(f"  Encoded bits: {len(encoded)}")
         print(f"  Code rate: {len(test_bits)/len(encoded):.4f}")
         
         # 解码无错
         decoded = coder.decode(encoded)
+        # RS解码可能包含填充，截断比较
+        decoded = decoded[:len(test_bits)]
         errors_no_noise = np.sum(decoded != test_bits)
         print(f"  Decoding errors (no noise): {errors_no_noise}")
         
         # 添加错误进行测试
+        # RS(255,223) 可以纠正 16 个字节错误
         encoded_with_error = encoded.copy()
-        encoded_with_error[10] = (encoded_with_error[10] + 1) % 2
-        encoded_with_error[20] = (encoded_with_error[20] + 1) % 2
+        # 引入 5 个字节错误 (分散在不同字节)
+        for i in range(5):
+            idx = i * 8 + 2 # 每个字节的第3位翻转
+            if idx < len(encoded_with_error):
+                encoded_with_error[idx] = 1 - encoded_with_error[idx]
         
         decoded_with_error = coder.decode(encoded_with_error)
+        decoded_with_error = decoded_with_error[:len(test_bits)]
         errors_with_noise = np.sum(decoded_with_error != test_bits)
-        print(f"  Decoding errors (with 2 bit errors): {errors_with_noise}")
-        print(f"✓ BCH decoding successful")
+        print(f"  Decoding errors (with 5 byte errors): {errors_with_noise}")
+        print(f"✓ RS decoding successful")
         
         return True
     except Exception as e:
         print(f"✗ Channel encoding test failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -228,7 +237,7 @@ def run_all_tests():
     tests = [
         ("Signal Processing", test_signal_processing),
         ("Source Encoding (Huffman)", test_source_encoding),
-        ("Channel Encoding (BCH)", test_channel_encoding),
+        ("Channel Encoding (Reed-Solomon)", test_channel_encoding),
         ("Modulation/Demodulation (BPSK)", test_modulation),
         ("Speech Recognition", test_speech_recognition),
         ("Control System (PID)", test_control_system),

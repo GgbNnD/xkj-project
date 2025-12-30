@@ -6,11 +6,11 @@ Main Program for Remote Voice Control System
 1. 语音信号采集 (Signal Sampling)
 2. 量化处理 (Signal Quantization)
 3. 信源编码 - Huffman (Source Encoding)
-4. 信道编码 - BCH (Channel Encoding)
+4. 信道编码 - Reed-Solomon (Channel Encoding)
 5. 调制 - BPSK (Modulation)
 6. 信道传输 - AWGN (Channel Transmission)
 7. 解调 (Demodulation)
-8. 信道解码 - BCH (Channel Decoding)
+8. 信道解码 - Reed-Solomon (Channel Decoding)
 9. 信源解码 - Huffman (Source Decoding)
 10. 语音识别 (Speech Recognition)
 11. 控制系统执行 (Control System)
@@ -27,7 +27,7 @@ from datetime import datetime
 # 导入各个模块
 from signal_processing import SignalProcessing
 from source_encoding import SourceEncoding
-from channel_encoding import BCHCoder
+from channel_encoding import RSCoder
 from modulation import Modulation
 from speech_recognition_system import SpeechRecognitionSystem
 from control_system import ControlSystem
@@ -58,8 +58,8 @@ class RemoteVoiceControlSystem:
         self.config = {
             'fs': 44100,                    # 采样频率
             'quantization_bits': 8,        # 量化位数
-            'channel_code_n': 15,          # BCH码字长
-            'channel_code_k': 7,           # BCH信息位
+            'channel_code_n': 255,         # RS码字长
+            'channel_code_k': 223,         # RS信息位
             'snr_db': 20,                  # 信噪比
             'num_commands': 4,             # 命令数量
         }
@@ -92,7 +92,7 @@ class RemoteVoiceControlSystem:
         
         self.source_encoder = SourceEncoding()
         
-        self.channel_coder = BCHCoder(
+        self.channel_coder = RSCoder(
             n=self.config['channel_code_n'],
             k=self.config['channel_code_k']
         )

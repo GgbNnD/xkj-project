@@ -1,181 +1,110 @@
 """
-远程声音控制系统 - 信道编码模块（BCH编码）
+远程声音控制系统 - 信道编码模块（Reed-Solomon编码）
 Channel Encoding Module for Remote Voice Control System
 """
 
 import numpy as np
 from typing import Tuple, List
 import logging
+try:
+    from reedsolo import RSCodec, ReedSolomonError
+except ImportError:
+    print("Error: reedsolo module not found. Please install it using 'pip install reedsolo'")
+    raise
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class BCHCoder:
-    """(n,k) BCH编码器/解码器"""
+class RSCoder:
+    """Reed-Solomon 编码器/解码器"""
     
-    def __init__(self, n: int = 15, k: int = 7):
+    def __init__(self, n: int = 255, k: int = 223):
         """
-        初始化BCH编码器
+        初始化 RS 编码器
         
         Args:
-            n: 码字长度 (例如15)
-            k: 信息位长度 (例如7)
+            n: 码字长度 (字节)
+            k: 信息长度 (字节)
         """
-        self.n = n  # 码字长度
-        self.k = k  # 信息位长度
-        self.t = (n - k) // 2  # 可纠正的错误位数
+        self.n = n
+        self.k = k
+        self.nsym = n - k # 纠错字节数
+        self.rsc = RSCodec(self.nsym)
         
-        # 对于(15,7) BCH码，生成多项式
-        # G(x) = x^8 + x^7 + x^6 + x^5 + x^4 + x^2 + 1
-        # 对应系数: [1,0,0,1,0,1,1,0,1]
-        self.generator_poly = self._get_generator_poly()
+        logger.info(f"RS({n},{k}) coder initialized")
+        logger.info(f"Error correction capability: {self.nsym // 2} bytes")
+
+    def _bits_to_bytes(self, bits: np.ndarray) -> bytearray:
+        """将比特数组转换为字节数组"""
+        bits = bits.astype(int).flatten()
+        # 补齐到8的倍数
+        if len(bits) % 8 != 0:
+            pad_len = 8 - (len(bits) % 8)
+            bits = np.concatenate([bits, np.zeros(pad_len, dtype=int)])
         
-        logger.info(f"BCH({n},{k}) coder initialized")
-        logger.info(f"Error correction capability: {self.t} bits")
-    
-    def _get_generator_poly(self) -> np.ndarray:
-        """获取生成多项式系数"""
-        if self.n == 15 and self.k == 7:
-            # (15,7) BCH码的生成多项式
-            # G(x) = x^8 + x^7 + x^6 + x^5 + x^4 + x^2 + 1
-            return np.array([1, 0, 0, 1, 0, 1, 1, 0, 1], dtype=int)
-        else:
-            # 一般情况：使用简化的多项式
-            return np.ones(self.n - self.k + 1, dtype=int)
-    
-    def _gf_poly_divide(self, dividend: np.ndarray, 
-                       divisor: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        在GF(2)上进行多项式除法
-        
-        Args:
-            dividend: 被除数
-            divisor: 除数
-            
-        Returns:
-            quotient: 商
-            remainder: 余数
-        """
-        dividend = dividend.copy()
-        divisor = divisor.copy()
-        
-        # 移除首位0
-        while len(dividend) > 0 and dividend[0] == 0:
-            dividend = dividend[1:]
-        while len(divisor) > 0 and divisor[0] == 0:
-            divisor = divisor[1:]
-        
-        quotient = []
-        
-        while len(dividend) >= len(divisor) and len(divisor) > 0:
-            quotient.append(1)
-            # XOR操作
-            for i in range(len(divisor)):
-                dividend[i] = (dividend[i] + divisor[i]) % 2
-            # 移除首位0
-            while len(dividend) > 0 and dividend[0] == 0:
-                dividend = dividend[1:]
-        
-        remainder = dividend if len(dividend) > 0 else np.array([0], dtype=int)
-        quotient = np.array(quotient, dtype=int) if quotient else np.array([0], dtype=int)
-        
-        return quotient, remainder
-    
+        # 转换为字节
+        byte_arr = bytearray()
+        for i in range(0, len(bits), 8):
+            byte = 0
+            for j in range(8):
+                if i + j < len(bits):
+                    byte = (byte << 1) | bits[i+j]
+            byte_arr.append(byte)
+        return byte_arr
+
+    def _bytes_to_bits(self, byte_arr: bytearray) -> np.ndarray:
+        """将字节数组转换为比特数组"""
+        bits = []
+        for byte in byte_arr:
+            for i in range(7, -1, -1):
+                bits.append((byte >> i) & 1)
+        return np.array(bits, dtype=int)
+
     def encode(self, information_bits: np.ndarray) -> np.ndarray:
         """
-        对信息比特进行BCH编码
+        对信息比特进行RS编码
         
         Args:
-            information_bits: 信息比特数组 (长度应为k的倍数)
+            information_bits: 信息比特数组
             
         Returns:
-            coded_bits: 编码后的比特数组 (长度为n的倍数)
+            coded_bits: 编码后的比特数组
         """
-        # 确保输入是1D数组
-        information_bits = information_bits.astype(int).flatten()
+        # 转换为字节
+        input_bytes = self._bits_to_bytes(information_bits)
         
-        # 填充到k的倍数
-        if len(information_bits) % self.k != 0:
-            pad_length = self.k - (len(information_bits) % self.k)
-            information_bits = np.concatenate([information_bits, 
-                                             np.zeros(pad_length, dtype=int)])
+        encoded_bytes = bytearray()
+        # 分块处理
+        chunk_size = self.k
         
-        num_blocks = len(information_bits) // self.k
-        coded_bits = []
+        # 计算需要多少块
+        num_chunks = (len(input_bytes) + chunk_size - 1) // chunk_size
         
-        for block_idx in range(num_blocks):
-            # 提取当前块的信息比特
-            info_block = information_bits[block_idx * self.k:(block_idx + 1) * self.k]
+        for i in range(num_chunks):
+            start = i * chunk_size
+            end = min(start + chunk_size, len(input_bytes))
+            chunk = input_bytes[start:end]
             
-            # 创建多项式：info_block * x^(n-k)
-            shifted = np.concatenate([info_block, np.zeros(self.n - self.k, dtype=int)])
+            # 填充到 k 字节
+            if len(chunk) < chunk_size:
+                padding = chunk_size - len(chunk)
+                chunk_padded = bytearray(chunk)
+                chunk_padded.extend(b'\x00' * padding)
+                chunk = chunk_padded
             
-            # 计算余数（奇偶校验位）
-            _, parity = self._gf_poly_divide(shifted, self.generator_poly)
+            # 编码
+            encoded_chunk = self.rsc.encode(chunk)
+            encoded_bytes.extend(encoded_chunk)
             
-            # 填充余数到正确长度
-            parity = np.concatenate([np.zeros(self.n - self.k - len(parity), dtype=int), parity])
-            
-            # 码字 = 信息比特 || 奇偶校验比特
-            codeword = np.concatenate([info_block, parity])
-            coded_bits.extend(codeword)
+        coded_bits = self._bytes_to_bits(encoded_bytes)
         
-        coded_bits = np.array(coded_bits, dtype=int)
-        
-        logger.info(f"BCH Encoding: {len(information_bits)} info bits -> "
-                   f"{len(coded_bits)} coded bits")
-        logger.info(f"Code rate: {len(information_bits) / len(coded_bits):.4f}")
-        
+        logger.info(f"RS Encoding: {len(information_bits)} bits -> {len(coded_bits)} bits")
         return coded_bits
-    
-    def _syndrome_decode(self, received: np.ndarray) -> np.ndarray:
-        """
-        计算伴随式用于纠错
-        
-        Args:
-            received: 接收到的码字
-            
-        Returns:
-            syndrome: 伴随式
-        """
-        _, syndrome = self._gf_poly_divide(received, self.generator_poly)
-        # 填充到正确长度
-        syndrome = np.concatenate([np.zeros(self.n - self.k - len(syndrome), dtype=int), 
-                                  syndrome])
-        return syndrome[:self.n - self.k]
-    
-    def _find_error_position(self, syndrome: np.ndarray) -> List[int]:
-        """
-        使用伴随式找到错误位置（简化版本）
-        
-        Args:
-            syndrome: 伴随式
-            
-        Returns:
-            error_positions: 错误比特的位置列表
-        """
-        # 对于简单的实现，如果伴随式全为0，则无错误
-        if np.all(syndrome == 0):
-            return []
-        
-        # 对于更复杂的纠错需要使用Peterson-Gorenstein-Zierler算法
-        # 这里使用简化版本：尝试所有可能的单比特错误
-        error_positions = []
-        
-        for pos in range(self.n):
-            test = np.zeros(self.n, dtype=int)
-            test[pos] = 1
-            test_syndrome = self._syndrome_decode(test)
-            if np.array_equal(test_syndrome, syndrome):
-                error_positions.append(pos)
-                break
-        
-        return error_positions
-    
+
     def decode(self, coded_bits: np.ndarray) -> np.ndarray:
         """
-        对BCH编码的比特进行解码和纠错
+        对RS编码的比特进行解码
         
         Args:
             coded_bits: 编码后的比特数组
@@ -183,85 +112,62 @@ class BCHCoder:
         Returns:
             decoded_bits: 解码后的信息比特
         """
-        coded_bits = coded_bits.astype(int).flatten()
+        input_bytes = self._bits_to_bytes(coded_bits)
         
-        # 确保长度是n的倍数
-        if len(coded_bits) % self.n != 0:
-            # 填充到n的倍数
-            pad_length = self.n - (len(coded_bits) % self.n)
-            coded_bits = np.concatenate([coded_bits, np.zeros(pad_length, dtype=int)])
+        decoded_bytes = bytearray()
+        chunk_size = self.n # 编码后的块大小 (k + nsym)
         
-        num_blocks = len(coded_bits) // self.n
-        decoded_bits = []
         errors_corrected = 0
         
-        for block_idx in range(num_blocks):
-            # 提取当前块
-            received = coded_bits[block_idx * self.n:(block_idx + 1) * self.n]
+        for i in range(0, len(input_bytes), chunk_size):
+            chunk = input_bytes[i : i + chunk_size]
             
-            # 计算伴随式
-            syndrome = self._syndrome_decode(received)
-            
-            # 检测错误
-            error_positions = self._find_error_position(syndrome)
-            
-            # 纠正错误
-            if error_positions:
-                for pos in error_positions:
-                    received[pos] = (received[pos] + 1) % 2
-                    errors_corrected += 1
-            
-            # 提取信息比特
-            info_bits = received[:self.k]
-            decoded_bits.extend(info_bits)
+            if len(chunk) < chunk_size:
+                logger.warning(f"Incomplete block received in RS decode: {len(chunk)} bytes")
+                continue
+                
+            try:
+                # decode returns (decoded_msg, decoded_msg_with_ecc, errata_pos)
+                decoded_chunk, _, errata_pos = self.rsc.decode(chunk)
+                decoded_bytes.extend(decoded_chunk)
+                if errata_pos:
+                    errors_corrected += len(errata_pos)
+            except ReedSolomonError:
+                logger.error("RS Decoding failed: too many errors")
+                # 尽力而为：直接取数据部分（前k个字节）
+                raw_data = chunk[:self.k]
+                decoded_bytes.extend(raw_data)
         
-        decoded_bits = np.array(decoded_bits, dtype=int)
+        decoded_bits = self._bytes_to_bits(decoded_bytes)
         
-        logger.info(f"BCH Decoding: {len(coded_bits)} coded bits -> "
-                   f"{len(decoded_bits)} info bits")
-        logger.info(f"Errors corrected: {errors_corrected}")
+        logger.info(f"RS Decoding: {len(coded_bits)} bits -> {len(decoded_bits)} bits")
+        logger.info(f"Errors corrected (approx symbols): {errors_corrected}")
         
         return decoded_bits
-    
-    def get_parity_check_matrix(self) -> np.ndarray:
-        """获取奇偶校验矩阵（用于参考）"""
-        # 对于(15,7) BCH码
-        if self.n == 15 and self.k == 7:
-            # H矩阵是 8x15 的
-            H = np.array([
-                [1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0],
-                [0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0],
-                [0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 0, 0],
-                [0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 0],
-                [0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0],
-                [0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0],
-                [0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1],
-                [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0],
-            ], dtype=int)
-            return H
-        else:
-            # 返回简化版本
-            return np.eye(self.n - self.k, self.n, dtype=int)
-
 
 if __name__ == "__main__":
-    # 测试BCH编码
-    coder = BCHCoder(n=15, k=7)
+    # 测试 RS 编码
+    coder = RSCoder(n=255, k=223)
     
     # 创建测试信息比特
-    test_info = np.array([1, 0, 1, 1, 0, 1, 0] * 10, dtype=int)
+    test_info = np.random.randint(0, 2, 1784)
     
     # 编码
     encoded = coder.encode(test_info)
     print(f"Information bits: {len(test_info)}")
     print(f"Encoded bits: {len(encoded)}")
-    print(f"First codeword: {encoded[:15]}")
     
-    # 添加一个错误
+    # 添加错误
     encoded_with_error = encoded.copy()
-    encoded_with_error[5] = (encoded_with_error[5] + 1) % 2
+    for i in range(10):
+        bit_idx = i * 8
+        encoded_with_error[bit_idx] = 1 - encoded_with_error[bit_idx]
     
     # 解码
     decoded = coder.decode(encoded_with_error)
     print(f"\nDecoded bits: {len(decoded)}")
-    print(f"Reconstruction errors: {np.sum(decoded != test_info)}")
+    
+    # 比较
+    decoded_trimmed = decoded[:len(test_info)]
+    errors = np.sum(decoded_trimmed != test_info)
+    print(f"Reconstruction errors: {errors}")
