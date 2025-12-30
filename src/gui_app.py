@@ -82,6 +82,9 @@ class VoiceControlGUI:
         
         self.btn_play_decoded = ttk.Button(control_frame, text="播放解码 (Play Decoded)", command=self._play_decoded, state=tk.DISABLED)
         self.btn_play_decoded.pack(side=tk.LEFT, padx=5)
+
+        self.btn_analyze = ttk.Button(control_frame, text="详细分析 (Analysis)", command=self._open_analysis_window, state=tk.DISABLED)
+        self.btn_analyze.pack(side=tk.LEFT, padx=5)
         
         self.lbl_status = ttk.Label(control_frame, text="就绪", foreground="green")
         self.lbl_status.pack(side=tk.LEFT, padx=10)
@@ -299,6 +302,7 @@ class VoiceControlGUI:
         
         # 启用回放按钮
         self.root.after(0, lambda: self.btn_play.configure(state=tk.NORMAL))
+        self.root.after(0, lambda: self.btn_analyze.configure(state=tk.NORMAL))
         
         # 更新波形图 (录音)
         self.ax1.clear()
@@ -409,6 +413,109 @@ class VoiceControlGUI:
             
         step_anim(0)
         
+    def _open_analysis_window(self):
+        """打开详细分析窗口"""
+        if self.last_recorded_signal is None:
+            return
+            
+        # 创建新窗口
+        window = tk.Toplevel(self.root)
+        window.title("信号分析 (Signal Analysis)")
+        window.geometry("1400x900")
+        
+        # 显示加载中
+        lbl_loading = ttk.Label(window, text="正在分析信号...", font=("Arial", 14))
+        lbl_loading.pack(pady=20)
+        window.update()
+        
+        try:
+            # 处理信号获取所有阶段数据
+            snr = self.scale_snr.get()
+            result = self.system.process_audio_signal(
+                self.last_recorded_signal, 
+                self.last_fs, 
+                snr_db=snr, 
+                return_signals=True
+            )
+            
+            if not result['overall_success']:
+                lbl_loading.configure(text=f"分析失败: {result.get('error')}")
+                return
+                
+            lbl_loading.destroy()
+            
+            stages = result['stages']
+            
+            # 准备绘图数据
+            # (标题, 信号, 采样率, 是否绘制语谱图)
+            plot_data = [
+                ("Original Signal", stages['sampling']['signal'], self.last_fs, True),
+                ("Quantized Signal", stages['quantization']['signal'], self.last_fs, True),
+                ("Modulated (BPSK Symbols)", stages['modulation']['signal'], 1, False),
+                ("Received (Noisy Symbols)", stages['channel_transmission']['signal'], 1, False),
+                ("Reconstructed Signal", stages['speech_recognition']['reconstructed_signal'], self.last_fs, True)
+            ]
+            
+            # 创建画布
+            fig = Figure(figsize=(14, 10), dpi=100)
+            canvas = FigureCanvasTkAgg(fig, master=window)
+            
+            # 添加滚动条 (如果需要)
+            # 这里直接全屏显示
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            
+            # 绘图
+            rows = 5
+            cols = 3
+            
+            for i, (title, signal, fs, show_spec) in enumerate(plot_data):
+                # 1. 时域波形
+                ax_time = fig.add_subplot(rows, cols, i*cols + 1)
+                ax_time.plot(signal)
+                ax_time.set_title(f"{title} - Time Domain")
+                ax_time.grid(True)
+                # 限制点数以提高性能
+                if len(signal) > 10000:
+                    ax_time.set_xlim(0, len(signal))
+                
+                # 2. 语谱图 (Spectrogram)
+                ax_spec = fig.add_subplot(rows, cols, i*cols + 2)
+                if show_spec and len(signal) > 256:
+                    try:
+                        ax_spec.specgram(signal, Fs=fs, NFFT=256, noverlap=128)
+                        ax_spec.set_title(f"{title} - Spectrogram")
+                    except Exception as e:
+                        ax_spec.text(0.5, 0.5, f"Error: {e}", ha='center')
+                else:
+                    ax_spec.text(0.5, 0.5, "N/A", ha='center')
+                    ax_spec.set_title(f"{title} - Spectrogram")
+                
+                # 3. 频谱图 (Spectrum)
+                ax_freq = fig.add_subplot(rows, cols, i*cols + 3)
+                if len(signal) > 0:
+                    try:
+                        # 计算FFT
+                        n = len(signal)
+                        Y = np.fft.fft(signal)
+                        freq = np.fft.fftfreq(n, d=1/fs if fs > 1 else 1)
+                        
+                        # 只取正频率
+                        mask = freq >= 0
+                        ax_freq.plot(freq[mask], np.abs(Y[mask]))
+                        ax_freq.set_title(f"{title} - Spectrum")
+                        ax_freq.grid(True)
+                        # 对数坐标可能更好，但线性坐标更直观
+                        # ax_freq.set_yscale('log')
+                    except Exception as e:
+                        ax_freq.text(0.5, 0.5, f"Error: {e}", ha='center')
+                
+            fig.tight_layout()
+            canvas.draw()
+            
+        except Exception as e:
+            messagebox.showerror("Analysis Error", str(e))
+            logger.error(f"Analysis failed: {e}", exc_info=True)
+
     def on_closing(self):
         self.running = False
         self.root.destroy()

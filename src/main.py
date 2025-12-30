@@ -106,7 +106,7 @@ class RemoteVoiceControlSystem:
         
         self.control_system = ControlSystem(system_type='motor')
     
-    def process_audio_signal(self, sampled_signal: np.ndarray, fs: int, snr_db: float = None) -> dict:
+    def process_audio_signal(self, sampled_signal: np.ndarray, fs: int, snr_db: float = None, return_signals: bool = False) -> dict:
         """
         处理音频信号数据（内存中）
         
@@ -114,6 +114,7 @@ class RemoteVoiceControlSystem:
             sampled_signal: 采样后的音频信号
             fs: 采样频率
             snr_db: 信噪比
+            return_signals: 是否返回中间信号数据
             
         Returns:
             results: 处理结果字典
@@ -135,6 +136,8 @@ class RemoteVoiceControlSystem:
                 'signal_length': len(sampled_signal),
                 'sample_rate': fs,
             }
+            if return_signals:
+                stage_results['signal'] = sampled_signal
             results['stages']['sampling'] = stage_results
             
             # 2. 量化处理
@@ -146,6 +149,8 @@ class RemoteVoiceControlSystem:
                 'quantized_bits_length': len(quantized_bits),
                 'quantization_bits': self.config['quantization_bits'],
             }
+            if return_signals:
+                stage_results['signal'] = quantized_signal
             results['stages']['quantization'] = stage_results
             
             # 3. 信源编码 (Huffman)
@@ -178,6 +183,8 @@ class RemoteVoiceControlSystem:
                 'signal_length': len(modulated_signal),
                 'signal_power': float(np.mean(modulated_signal ** 2)),
             }
+            if return_signals:
+                stage_results['signal'] = modulated_signal
             results['stages']['modulation'] = stage_results
             
             # 6. 信道传输 (AWGN)
@@ -187,6 +194,8 @@ class RemoteVoiceControlSystem:
                 'signal_length': len(received_signal),
                 'noise_power': float(np.mean((received_signal - modulated_signal) ** 2)),
             }
+            if return_signals:
+                stage_results['signal'] = received_signal
             results['stages']['channel_transmission'] = stage_results
             
             # 7. 解调 (BPSK)
@@ -276,13 +285,14 @@ class RemoteVoiceControlSystem:
         
         return results
 
-    def process_audio_file(self, audio_path: str, snr_db: float = None) -> dict:
+    def process_audio_file(self, audio_path: str, snr_db: float = None, return_signals: bool = False) -> dict:
         """
         处理音频文件的完整流程
         
         Args:
             audio_path: 音频文件路径
             snr_db: 信噪比（如果为None，使用配置中的值）
+            return_signals: 是否返回中间信号数据
             
         Returns:
             results: 处理结果字典
@@ -298,7 +308,7 @@ class RemoteVoiceControlSystem:
             sampled_signal, fs = self.signal_processor.signal_sampling(audio_path)
             
             # 调用通用处理函数
-            results = self.process_audio_signal(sampled_signal, fs, snr_db)
+            results = self.process_audio_signal(sampled_signal, fs, snr_db, return_signals)
             results['audio_path'] = audio_path
             return results
             
