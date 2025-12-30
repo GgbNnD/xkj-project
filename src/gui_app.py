@@ -85,6 +85,9 @@ class VoiceControlGUI:
 
         self.btn_analyze = ttk.Button(control_frame, text="详细分析 (Analysis)", command=self._open_analysis_window, state=tk.DISABLED)
         self.btn_analyze.pack(side=tk.LEFT, padx=5)
+
+        self.btn_step_resp = ttk.Button(control_frame, text="阶跃响应 (Step Resp)", command=self._show_step_response)
+        self.btn_step_resp.pack(side=tk.LEFT, padx=5)
         
         self.lbl_status = ttk.Label(control_frame, text="就绪", foreground="green")
         self.lbl_status.pack(side=tk.LEFT, padx=10)
@@ -402,9 +405,26 @@ class VoiceControlGUI:
                 return
             
             if rotation:
-                # 旋转动画（简化：只改变箭头方向）
-                # 实际旋转矩形比较复杂，这里只演示位移
-                pass
+                # 旋转动画（改变箭头方向）
+                angle_deg = rotation * (i + 1) / steps
+                angle_rad = np.radians(angle_deg)
+                
+                # 箭头起点 (center)
+                cx, cy = self.car_x, self.car_y
+                # 箭头长度
+                length = 40
+                
+                # 初始角度 (向上，对应 -pi/2)
+                start_angle = -np.pi / 2
+                
+                # 当前角度
+                current_angle = start_angle + angle_rad
+                
+                # 新的终点
+                end_x = cx + length * np.cos(current_angle)
+                end_y = cy + length * np.sin(current_angle)
+                
+                self.vis_canvas.coords(self.arrow_id, cx, cy, end_x, end_y)
             else:
                 self.vis_canvas.move(self.car_id, dx/steps, dy/steps)
                 self.vis_canvas.move(self.arrow_id, dx/steps, dy/steps)
@@ -412,6 +432,63 @@ class VoiceControlGUI:
             self.root.after(delay, lambda: step_anim(i+1))
             
         step_anim(0)
+
+    def _show_step_response(self):
+        """显示控制系统阶跃响应"""
+        window = tk.Toplevel(self.root)
+        window.title("控制系统阶跃响应 (Step Response)")
+        window.geometry("800x600")
+        
+        # 使用系统中的控制器进行仿真
+        from control_system import ControlSystem
+        cs = ControlSystem(system_type='motor')
+        
+        # 执行阶跃信号 (目标值 1.0)
+        cs.controller.reset()
+        cs.system.reset()
+        cs.controller.set_setpoint(1.0)
+        
+        duration = 2.0
+        dt = 0.01
+        steps = int(duration / dt)
+        
+        times = []
+        positions = []
+        outputs = []
+        
+        for i in range(steps):
+            t = i * dt
+            current_pos = cs.system.get_state().position
+            output = cs.controller.update(current_pos)
+            cs.system.apply_voltage(output, dt)
+            
+            times.append(t)
+            positions.append(current_pos)
+            outputs.append(output)
+            
+        # 绘图
+        fig = Figure(figsize=(8, 6), dpi=100)
+        ax1 = fig.add_subplot(211)
+        ax1.plot(times, positions, label='Response')
+        ax1.plot(times, [1.0]*len(times), 'r--', label='Setpoint')
+        ax1.set_title('Step Response (Position)')
+        ax1.set_ylabel('Position')
+        ax1.grid(True)
+        ax1.legend()
+        
+        ax2 = fig.add_subplot(212)
+        ax2.plot(times, outputs, color='green')
+        ax2.set_title('Control Output (Voltage)')
+        ax2.set_xlabel('Time (s)')
+        ax2.set_ylabel('Voltage (V)')
+        ax2.grid(True)
+        
+        fig.tight_layout()
+        
+        canvas = FigureCanvasTkAgg(fig, master=window)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
         
     def _open_analysis_window(self):
         """打开详细分析窗口"""
