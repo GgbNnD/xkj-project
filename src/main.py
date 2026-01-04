@@ -56,7 +56,7 @@ class RemoteVoiceControlSystem:
         """
         # 默认配置
         self.config = {
-            'fs': 44100,                    # 采样频率
+            'fs': 20000,                    # 采样频率
             'quantization_bits': 8,        # 量化位数
             'channel_code_n': 255,         # RS码字长
             'channel_code_k': 191,         # RS信息位 (增强抗干扰能力)

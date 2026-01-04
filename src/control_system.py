@@ -191,7 +191,7 @@ class ControlSystem:
         self.system_type = system_type
         
         # PID控制器
-        self.controller = PIDController(kp=2.0, ki=0.5, kd=0.3)
+        self.controller = PIDController(kp=1.0, ki=0.0, kd=0.0)
         
         # 系统模型
         if system_type == 'motor':
